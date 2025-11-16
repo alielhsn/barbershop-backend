@@ -1,4 +1,4 @@
-//barbershopfourr/server/controllers/blockedSlotsController.js
+// barbershopfourr/server/controllers/blockedSlotsController.js
 const db = require('../config/db');
 
 // Create blocked slot
@@ -10,15 +10,25 @@ exports.createBlockedSlot = async (req, res) => {
       return res.status(400).json({ error: 'Barber name and date are required' });
     }
 
+    const timesText = JSON.stringify(times || []);
+
     const [result] = await db.query(
       'INSERT INTO blocked_slots (barber_name, date, times, is_all_day, reason) VALUES (?, ?, ?, ?, ?)',
-      [barber_name, date, JSON.stringify(times || []), is_all_day || false, reason || null]
+      [barber_name, date, timesText, is_all_day || false, reason || null]
     );
 
     // Get the inserted blocked slot
-    const [newBlockedSlot] = await db.query('SELECT * FROM blocked_slots WHERE id = ?', [result.insertId]);
+    const [newBlockedSlotRows] = await db.query('SELECT * FROM blocked_slots WHERE id = ?', [result.insertId]);
+    let newBlockedSlot = newBlockedSlotRows[0];
 
-    res.status(201).json(newBlockedSlot[0]);
+    // Parse times TEXT into array
+    try {
+      newBlockedSlot.times = newBlockedSlot.times ? JSON.parse(newBlockedSlot.times) : [];
+    } catch (e) {
+      newBlockedSlot.times = [];
+    }
+
+    res.status(201).json(newBlockedSlot);
   } catch (err) {
     console.error('Error creating blocked slot:', err);
     res.status(500).json({ error: 'Failed to create blocked slot: ' + err.message });
@@ -46,7 +56,21 @@ exports.getBlockedSlots = async (req, res) => {
     query += ' ORDER BY date ASC, created_at ASC';
 
     const [result] = await db.query(query, queryParams);
-    res.json(result);
+
+    const parsed = result.map(slot => {
+      let timesArr = [];
+      try {
+        timesArr = slot.times ? JSON.parse(slot.times) : [];
+      } catch (e) {
+        timesArr = [];
+      }
+      return {
+        ...slot,
+        times: timesArr
+      };
+    });
+
+    res.json(parsed);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to fetch blocked slots' });
@@ -81,8 +105,21 @@ exports.getAllBlockedSlots = async (req, res) => {
       SELECT * FROM blocked_slots 
       ORDER BY date ASC, created_at ASC
     `);
+
+    const parsed = result.map(slot => {
+      let timesArr = [];
+      try {
+        timesArr = slot.times ? JSON.parse(slot.times) : [];
+      } catch (e) {
+        timesArr = [];
+      }
+      return {
+        ...slot,
+        times: timesArr
+      };
+    });
     
-    res.json(result);
+    res.json(parsed);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to fetch blocked slots' });
@@ -109,4 +146,3 @@ exports.cleanupPastBlockedSlots = async () => {
     throw err;
   }
 };
-
