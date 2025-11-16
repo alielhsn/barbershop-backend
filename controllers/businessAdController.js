@@ -8,8 +8,21 @@ exports.getBusinessAds = async (req, res) => {
     const [result] = await db.query(
       'SELECT * FROM business_ads WHERE is_active = true ORDER BY created_at DESC'
     );
+
+    const parsed = result.map(ad => {
+      let imagesArr = [];
+      try {
+        imagesArr = ad.images ? JSON.parse(ad.images) : [];
+      } catch (e) {
+        imagesArr = [];
+      }
+      return {
+        ...ad,
+        images: imagesArr
+      };
+    });
     
-    res.json(result);
+    res.json(parsed);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to fetch business ads' });
@@ -43,15 +56,24 @@ exports.createBusinessAd = async (req, res) => {
       }
     }
 
+    const imagesText = JSON.stringify(images || []);
+
     const [result] = await db.query(
       'INSERT INTO business_ads (title, title_ar, description, description_ar, redirect_url, images) VALUES (?, ?, ?, ?, ?, ?)',
-      [title, title_ar, description, description_ar, redirect_url, JSON.stringify(images || [])]
+      [title, title_ar, description, description_ar, redirect_url, imagesText]
     );
     
     // Get the inserted business ad
-    const [newBusinessAd] = await db.query('SELECT * FROM business_ads WHERE id = ?', [result.insertId]);
+    const [newBusinessAdRows] = await db.query('SELECT * FROM business_ads WHERE id = ?', [result.insertId]);
     
-    res.status(201).json(newBusinessAd[0]);
+    let newBusinessAd = newBusinessAdRows[0];
+    try {
+      newBusinessAd.images = newBusinessAd.images ? JSON.parse(newBusinessAd.images) : [];
+    } catch (e) {
+      newBusinessAd.images = [];
+    }
+    
+    res.status(201).json(newBusinessAd);
   } catch (err) {
     console.error('Error creating business ad:', err);
     res.status(500).json({ error: 'Failed to create business ad' });
@@ -87,19 +109,28 @@ exports.updateBusinessAd = async (req, res) => {
       }
     }
 
+    const imagesText = JSON.stringify(images || []);
+
     await db.query(
       'UPDATE business_ads SET title = ?, title_ar = ?, description = ?, description_ar = ?, redirect_url = ?, images = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-      [title, title_ar, description, description_ar, redirect_url, JSON.stringify(images || []), id]
+      [title, title_ar, description, description_ar, redirect_url, imagesText, id]
     );
     
     // Get the updated business ad
-    const [updatedBusinessAd] = await db.query('SELECT * FROM business_ads WHERE id = ?', [id]);
+    const [updatedBusinessAdRows] = await db.query('SELECT * FROM business_ads WHERE id = ?', [id]);
     
-    if (updatedBusinessAd.length === 0) {
+    if (updatedBusinessAdRows.length === 0) {
       return res.status(404).json({ error: 'Business ad not found' });
     }
+
+    let updatedBusinessAd = updatedBusinessAdRows[0];
+    try {
+      updatedBusinessAd.images = updatedBusinessAd.images ? JSON.parse(updatedBusinessAd.images) : [];
+    } catch (e) {
+      updatedBusinessAd.images = [];
+    }
     
-    res.json(updatedBusinessAd[0]);
+    res.json(updatedBusinessAd);
   } catch (err) {
     console.error('Error updating business ad:', err);
     res.status(500).json({ error: 'Failed to update business ad' });
@@ -117,7 +148,12 @@ exports.deleteBusinessAd = async (req, res) => {
       return res.status(404).json({ error: 'Business ad not found' });
     }
     
-    const images = adResult[0].images || [];
+    let images = [];
+    try {
+      images = adResult[0].images ? JSON.parse(adResult[0].images) : [];
+    } catch (e) {
+      images = [];
+    }
     
     // Delete the business ad from the database
     const [result] = await db.query(
@@ -130,7 +166,7 @@ exports.deleteBusinessAd = async (req, res) => {
     }
     
     // Delete the image files if they exist
-    if (images.length > 0) {
+    if (Array.isArray(images) && images.length > 0) {
       try {
         for (const imageUrl of images) {
           // Extract filename from URL
@@ -165,13 +201,20 @@ exports.toggleBusinessAdStatus = async (req, res) => {
     );
 
     // Get the updated business ad
-    const [updatedBusinessAd] = await db.query('SELECT * FROM business_ads WHERE id = ?', [id]);
+    const [updatedBusinessAdRows] = await db.query('SELECT * FROM business_ads WHERE id = ?', [id]);
 
-    if (updatedBusinessAd.length === 0) {
+    if (updatedBusinessAdRows.length === 0) {
       return res.status(404).json({ error: 'Business ad not found' });
     }
 
-    res.json(updatedBusinessAd[0]);
+    let updatedBusinessAd = updatedBusinessAdRows[0];
+    try {
+      updatedBusinessAd.images = updatedBusinessAd.images ? JSON.parse(updatedBusinessAd.images) : [];
+    } catch (e) {
+      updatedBusinessAd.images = [];
+    }
+
+    res.json(updatedBusinessAd);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to toggle business ad status' });
@@ -184,11 +227,23 @@ exports.getAllBusinessAds = async (req, res) => {
     const [result] = await db.query(
       'SELECT * FROM business_ads ORDER BY created_at DESC'
     );
+
+    const parsed = result.map(ad => {
+      let imagesArr = [];
+      try {
+        imagesArr = ad.images ? JSON.parse(ad.images) : [];
+      } catch (e) {
+        imagesArr = [];
+      }
+      return {
+        ...ad,
+        images: imagesArr
+      };
+    });
     
-    res.json(result);
+    res.json(parsed);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to fetch all business ads' });
   }
 };
-
