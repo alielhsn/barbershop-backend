@@ -185,6 +185,8 @@ const adminLoginRateLimit = rateLimit({
 // Apply rate limiting to auth routes
 app.use('/api/auth/login', adminLoginRateLimit);
 
+app.use("/api", require("./routes/initDb"));
+
 // Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/appointments', appointmentRoutes);
@@ -282,4 +284,5 @@ cleanupJob.start();
 // Start server
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
+
 });
