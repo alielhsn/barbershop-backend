@@ -1,4 +1,4 @@
- //barbershopfourr/server/controllers/appointmentController.js
+// barbershopfourr/server/controllers/appointmentController.js
 const db = require('../config/db');
 const cron = require('node-cron');
 const { sendReservationEmail, sendEditNotificationEmail, sendDeletionNotificationEmail } = require('../config/emailConfig');
@@ -33,13 +33,14 @@ exports.createAppointment = async (req, res) => {
     const englishBarberName = barberCheck[0].name;
 
     // First check if the time slot is blocked
+    // NOTE: times is stored as TEXT containing JSON (e.g. ["10:00 AM","11:00 AM"])
     const [blockedSlotCheck] = await db.query(
       `SELECT * FROM blocked_slots 
        WHERE barber_name = ? 
        AND date = ?
        AND (
-         (is_all_day = true) OR
-         (JSON_CONTAINS(times, JSON_QUOTE(?)))
+         (is_all_day = 1) OR
+         (times IS NOT NULL AND times <> '' AND times LIKE CONCAT('%"', ?, '"%'))
        )`,
       [englishBarberName, date, time]
     );
@@ -58,16 +59,26 @@ exports.createAppointment = async (req, res) => {
       return res.status(400).json({ error: 'This time slot is already booked' });
     }
 
+    const servicesText = JSON.stringify(services || []);
+
     const [result] = await db.query(
       'INSERT INTO appointments (client_name, phone_number, barber_name, appointment_date, appointment_time, services) VALUES (?, ?, ?, ?, ?, ?)',
-      [client_name, phone_number, englishBarberName, date, time, JSON.stringify(services)]
+      [client_name, phone_number, englishBarberName, date, time, servicesText]
     );
 
     // Get the inserted appointment
-    const [newAppointment] = await db.query(
+    const [newAppointmentRows] = await db.query(
       'SELECT * FROM appointments WHERE id = ?',
       [result.insertId]
     );
+
+    let newAppointment = newAppointmentRows[0];
+    // Parse services TEXT into array
+    try {
+      newAppointment.services = newAppointment.services ? JSON.parse(newAppointment.services) : [];
+    } catch (e) {
+      newAppointment.services = [];
+    }
 
     // === ADD TO ANALYZE TABLE ===
     try {
@@ -95,7 +106,7 @@ exports.createAppointment = async (req, res) => {
 
     res.status(201).json({
       message: 'Appointment created successfully',
-      appointment: newAppointment[0]
+      appointment: newAppointment
     });
 
   } catch (err) {
@@ -129,18 +140,46 @@ exports.getAppointments = async (req, res) => {
       [englishBarberName, date]
     );
     
+    // Parse services (TEXT) into arrays
+    const parsedAppointments = appointmentsResult.map(appt => {
+      let servicesArr = [];
+      try {
+        servicesArr = appt.services ? JSON.parse(appt.services) : [];
+      } catch (e) {
+        servicesArr = [];
+      }
+      return {
+        ...appt,
+        services: servicesArr
+      };
+    });
+
     // Get blocked slots for this date using English name
     const [blockedSlotsResult] = await db.query(
       `SELECT * FROM blocked_slots 
-      WHERE barber_name = ? 
-      AND date = ?`,
+       WHERE barber_name = ? 
+       AND date = ?`,
       [englishBarberName, date]
     );
     
+    // Parse times (TEXT) into arrays
+    const parsedBlockedSlots = blockedSlotsResult.map(slot => {
+      let timesArr = [];
+      try {
+        timesArr = slot.times ? JSON.parse(slot.times) : [];
+      } catch (e) {
+        timesArr = [];
+      }
+      return {
+        ...slot,
+        times: timesArr
+      };
+    });
+    
     // Combine appointments and blocked slots
     const allBookings = [
-      ...appointmentsResult,
-      ...blockedSlotsResult
+      ...parsedAppointments,
+      ...parsedBlockedSlots
     ];
     
     res.setHeader('Content-Type', 'application/json');
@@ -158,8 +197,21 @@ exports.getAllAppointments = async (req, res) => {
       'SELECT * FROM appointments ORDER BY appointment_date ASC, appointment_time ASC'
     );
     
+    const parsed = result.map(appt => {
+      let servicesArr = [];
+      try {
+        servicesArr = appt.services ? JSON.parse(appt.services) : [];
+      } catch (e) {
+        servicesArr = [];
+      }
+      return {
+        ...appt,
+        services: servicesArr
+      };
+    });
+
     res.setHeader('Content-Type', 'application/json');
-    res.json(result);
+    res.json(parsed);
   } catch (err) {
     console.error('Database error:', err);
     res.status(500).json({ error: 'Database error' });
@@ -231,8 +283,8 @@ exports.updateAppointment = async (req, res) => {
        WHERE barber_name = ? 
        AND date = ?
        AND (
-         (is_all_day = true) OR
-         (JSON_CONTAINS(times, JSON_QUOTE(?)))
+         (is_all_day = 1) OR
+         (times IS NOT NULL AND times <> '' AND times LIKE CONCAT('%"', ?, '"%'))
        )`,
       [barber_name, appointment_date, appointment_time]
     );
@@ -251,19 +303,28 @@ exports.updateAppointment = async (req, res) => {
       return res.status(400).json({ error: 'This time slot is already booked' });
     }
 
+    const servicesText = JSON.stringify(services || []);
+
     await db.query(
       'UPDATE appointments SET client_name = ?, phone_number = ?, barber_name = ?, appointment_date = ?, appointment_time = ?, services = ? WHERE id = ?',
-      [client_name, phone_number, barber_name, appointment_date, appointment_time, JSON.stringify(services), id]
+      [client_name, phone_number, barber_name, appointment_date, appointment_time, servicesText, id]
     );
 
     // Get the updated appointment
-    const [updatedAppointment] = await db.query(
+    const [updatedAppointmentRows] = await db.query(
       'SELECT * FROM appointments WHERE id = ?',
       [id]
     );
 
-    if (updatedAppointment.length === 0) {
+    if (updatedAppointmentRows.length === 0) {
       return res.status(404).json({ error: 'Appointment not found' });
+    }
+
+    let updatedAppointment = updatedAppointmentRows[0];
+    try {
+      updatedAppointment.services = updatedAppointment.services ? JSON.parse(updatedAppointment.services) : [];
+    } catch (e) {
+      updatedAppointment.services = [];
     }
 
     // === UPDATE ANALYZE TABLE ===
@@ -310,7 +371,7 @@ exports.updateAppointment = async (req, res) => {
       console.warn('Failed to send edit notification emails');
     }
 
-    res.json(updatedAppointment[0]);
+    res.json(updatedAppointment);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to update appointment' });
@@ -453,8 +514,21 @@ exports.getClientAppointments = async (req, res) => {
       [phone_number]
     );
     
+    const parsed = result.map(appt => {
+      let servicesArr = [];
+      try {
+        servicesArr = appt.services ? JSON.parse(appt.services) : [];
+      } catch (e) {
+        servicesArr = [];
+      }
+      return {
+        ...appt,
+        services: servicesArr
+      };
+    });
+
     res.setHeader('Content-Type', 'application/json');
-    res.json(result);
+    res.json(parsed);
   } catch (err) {
     console.error('Database error in getClientAppointments:', err);
     res.status(500).json({ error: 'Database error' });
@@ -465,7 +539,7 @@ exports.getClientAppointments = async (req, res) => {
 exports.debugAppointments = async (req, res) => {
   try {
     const [result] = await db.query(`
-      SELECT id, client_name, appointment_date, appointment_time 
+      SELECT id, client_name, appointment_date, appointment_time, services
       FROM appointments 
       ORDER BY appointment_date, appointment_time
     `);
@@ -479,9 +553,17 @@ exports.debugAppointments = async (req, res) => {
       const appointmentTime24h = convertTo24hFormat(appt.appointment_time);
       const appointmentTimeMinutes = convertTimeToMinutes24h(appointmentTime24h);
       const appointmentDateOnly = moment(appt.appointment_date).format('YYYY-MM-DD');
+
+      let servicesArr = [];
+      try {
+        servicesArr = appt.services ? JSON.parse(appt.services) : [];
+      } catch (e) {
+        servicesArr = [];
+      }
       
       return {
         ...appt,
+        services: servicesArr,
         raw_appointment_date: appt.appointment_date,
         formatted_date: appointmentDateOnly,
         converted_time_24h: appointmentTime24h,
@@ -504,4 +586,3 @@ exports.debugAppointments = async (req, res) => {
     res.status(500).json({ error: 'Debug failed: ' + error.message });
   }
 };
-
